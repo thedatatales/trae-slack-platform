@@ -1,6 +1,8 @@
 from .client import SlackClient
 from .router import SlackRouter
 from slack_bolt.adapter.fastapi import SlackRequestHandler
+from ...llm.ollama_client import OllamaClient
+import requests
 import logging
 
 logger = logging.getLogger(__name__)
@@ -16,41 +18,56 @@ class SlackEventListener:
         @self.client.app.event("message")
         def handle_message(body, say):
             try:
+                print("=== Starting message handler ===")
                 event = body["event"]
-                if "bot_id" in event:
-                    logger.info("Skipping bot message")
+                
+                # Skip bot messages
+                if event.get("subtype") == "bot_message" or "bot_id" in event:
                     return
                 
-                logger.info(f"Processing user message: {event}")
-                user = event.get("user", "there")
-                if "@Dasham" in event.get("text", ""):
-                    say(text=f"Hi <@{user}>! How can I help you today?")
-                    logger.info(f"Response sent to user {user}")
-            except Exception as e:
-                logger.error(f"Message handler error: {str(e)}")
-
-        @self.client.app.event("app_mention")
-        def handle_mention(body, say):
-            try:
-                event = body["event"]
-                if "bot_id" in event:
-                    logger.info("Skipping bot mention")
+                # Skip messages without text
+                if "text" not in event:
                     return
                 
-                logger.info(f"Processing user mention: {event}")
                 user = event.get("user", "there")
-                text = event.get("text", "").lower()
+                text = event.get("text", "").strip()
                 
-                # Handle different types of queries
-                if any(word in text for word in ["how are you", "hello", "hi", "hey"]):
-                    say(text=f"Hi <@{user}>! I'm doing great, thanks for asking! I'm here to help with sales information, legal queries, or general assistance. What would you like to know?")
-                elif "sales" in text:
-                    say(text=f"I'd be happy to help you with sales information, <@{user}>! What specific details are you looking for?")
-                elif "legal" in text:
-                    say(text=f"I can assist you with legal queries, <@{user}>! What information do you need?")
+                # Process message
+                say(text=f"<@{user}> I'm processing your request, please wait...")
+                
+                # Enhanced prompt with context
+                enhanced_prompt = f"""You are Dasham, a helpful AI assistant. 
+                Keep your responses concise and direct.
+                User question: {text}"""
+                
+                # Send request to Ollama
+                response = requests.post(
+                    "http://127.0.0.1:11434/api/generate",
+                    json={
+                        "model": "mistral",
+                        "prompt": enhanced_prompt,
+                        "stream": False,
+                        "temperature": 0.7,
+                        "top_k": 40,
+                        "top_p": 0.9
+                    },
+                    timeout=60
+                )
+                
+                if response.status_code == 200:
+                    ai_response = response.json().get('response', 'Sorry, I could not generate a response.')
+                    say(text=f"<@{user}> {ai_response}")
+                    print("Response sent successfully")
                 else:
-                    say(text=f"Hi <@{user}>! I'm here to help. You can ask me about sales, legal matters, or general information.")
+                    print(f"Ollama error status: {response.status_code}")
+                    say(text=f"<@{user}> I encountered an error generating a response.")
                     
-                logger.info(f"Response sent to user {user}")
+            except requests.Timeout:
+                print("Request timed out")
+                say(text=f"<@{user}> Sorry, the response is taking too long. Please try a shorter question.")
             except Exception as e:
-                logger.error(f"Mention handler error: {str(e)}")
+                print(f"Error in message handler: {str(e)}")
+                try:
+                    say(f"<@{event.get('user', 'there')}> Sorry, I encountered an error.")
+                except:
+                    print("Could not send error message")
