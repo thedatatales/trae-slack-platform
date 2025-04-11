@@ -13,21 +13,44 @@ class SlackEventListener:
         self.client = client
         self.router = SlackRouter()
         self.handler = SlackRequestHandler(self.client.app)
-        self.pranav = PranavAgent()
-        self.nivetha = NivethaAgent()
         self._register_handlers()
+        
+        # Enhanced interaction patterns
+        self.interaction_patterns = {
+            'greetings': ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening'],
+            'gratitude': ['thank', 'thanks', 'appreciate', 'grateful'],
+            'guidance': ['what next', 'what should', 'help me', 'advice', 'suggest'],
+            'team_query': ['pranav', 'nivetha', 'nivitha', 'cfo', 'cto', 'team']
+        }
+        
+        # Updated CEO prompt for more concise responses
+        self.ceo_prompt = """You are Dasham, CEO. Your style:
+- Direct and warm
+- Strategic yet approachable
+- Concise but personable
+
+Key points:
+- You lead a team including Pranav (CFO, finance expert) and Nivetha (CTO, tech leader)
+- You value clarity and purposeful communication
+- You aim to guide and connect people with the right resources
+
+Keep responses brief but impactful."""
+
+    def _create_enhanced_prompt(self, text: str, interaction_type: str) -> str:
+        base_prompt = f"{self.ceo_prompt}\n\nUser message: {text}\n\nResponse as Dasham:"
+        
+        if interaction_type == 'team_query':
+            return f"{base_prompt}\nMention your team members' roles briefly and offer to involve them if relevant."
+        elif interaction_type == 'greetings':
+            return f"{base_prompt}\nKeep the greeting warm but brief."
+        elif interaction_type == 'gratitude':
+            return f"{base_prompt}\nAcknowledge briefly and offer forward-looking support."
+        elif interaction_type == 'guidance':
+            return f"{base_prompt}\nProvide clear, actionable guidance."
+        else:
+            return f"{base_prompt}\nRespond concisely while being helpful."
     
     def _register_handlers(self):
-        @self.client.app.event("app_mention")
-        async def handle_mention(body, say):
-            try:
-                event = body["event"]
-                await self.router.route_mention(event, say)
-            except Exception as e:
-                logger.error(f"Error in app_mention handler: {str(e)}")
-                logger.exception(e)
-                await say(text=f"<@{event.get('user', 'there')}> Sorry, I encountered an error.")
-
         @self.client.app.event("message")
         def handle_message(body, say):
             try:
@@ -38,34 +61,26 @@ class SlackEventListener:
                     return
                 
                 user = event.get("user", "there")
-                text = event.get("text", "").strip()
+                text = event.get("text", "").strip().lower()
                 
-                # Send acknowledgment
-                say(text=f"<@{user}> I'm processing your request, please wait...")
+                # Handle different interaction types
+                prompt_type = self._get_interaction_type(text)
+                enhanced_prompt = self._create_enhanced_prompt(text, prompt_type)
                 
-                # Route to appropriate agent based on content
-                if any(word in text.lower() for word in ["finance", "budget", "cost", "investment", "risk"]):
-                    response = requests.post(
-                        "http://localhost:11434/api/generate",
-                        json={
-                            "model": "mistral",
-                            "prompt": f"As a CFO named Pranav: {text}",
-                            "stream": False
-                        },
-                        timeout=60
-                    ).json().get('response')
-                elif any(word in text.lower() for word in ["tech", "infrastructure", "cloud", "devops", "ai", "machine learning", "tech stack", "framework", "architecture"]):
-                    response = requests.post(
-                        "http://localhost:11434/api/generate",
-                        json={
-                            "model": "mistral",
-                            "prompt": f"As a CTO named Nivetha with expertise in AI and technology stacks: {text}",
-                            "stream": False
-                        },
-                        timeout=60
-                    ).json().get('response')
-                else:
-                    response = "I'm not sure how to help with that. Try asking about finance or technology."
+                # Send acknowledgment for longer queries
+                if len(text.split()) > 3 and prompt_type not in ['greetings', 'gratitude']:
+                    say(text=f"<@{user}> I'm processing your request, please wait...")
+                
+                response = requests.post(
+                    "http://localhost:11434/api/generate",
+                    json={
+                        "model": "mistral",
+                        "prompt": enhanced_prompt,
+                        "stream": False,
+                        "temperature": 0.7
+                    },
+                    timeout=60
+                ).json().get('response')
                 
                 say(text=f"<@{user}> {response}")
                 print("Response sent successfully")
@@ -76,6 +91,12 @@ class SlackEventListener:
                     say(f"<@{event.get('user', 'there')}> Sorry, I encountered an error.")
                 except:
                     print("Could not send error message")
+    
+    def _get_interaction_type(self, text: str) -> str:
+        for interaction_type, patterns in self.interaction_patterns.items():
+            if any(pattern in text for pattern in patterns):
+                return interaction_type
+        return 'general'
     
     async def generate_default_response(self, text: str) -> str:
         # Your existing Ollama code here
