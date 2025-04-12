@@ -3,7 +3,7 @@ from .router import SlackRouter
 from slack_bolt.adapter.fastapi import SlackRequestHandler
 from ...llm.ollama_client import OllamaClient
 import requests
-from ...agents import PranavAgent, NivethaAgent
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,22 @@ Keep responses brief but impactful."""
             return f"{base_prompt}\nRespond concisely while being helpful."
     
     def _register_handlers(self):
+        @self.client.app.event("app_mention")
+        async def handle_app_mention(body, say):
+            try:
+                print("=== Starting app_mention handler ===")
+                event = body["event"]
+                
+                # Route the mention through the router
+                await self.router.route_mention(event, say)
+                    
+            except Exception as e:
+                print(f"Error in app_mention handler: {str(e)}")
+                try:
+                    say(f"<@{event.get('user', 'there')}> Sorry, I encountered an error.")
+                except:
+                    print("Could not send error message")
+
         @self.client.app.event("message")
         def handle_message(body, say):
             try:
